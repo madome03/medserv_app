@@ -1,0 +1,20 @@
+<table>
+    <tr>
+      <th>User ID</th>
+      <th>Pending Requests</th>
+      <th>Submit Request</th>
+    </tr>
+    {% for user in users %}
+    <tr>
+      <td>{{ user.id }}</td>
+      <td>{{ user.pending_requests }}</td>
+      <td>
+        <form action="/submit-request" method="post">
+          <input type="hidden" name="user_id" value="{{ user.id }}">
+          <input type="submit" value="Submit">
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  
