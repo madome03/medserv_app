@@ -8,19 +8,20 @@ export class TodoInfraStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    // Create DDB table to store the tasks.
-    const table = new ddb.Table(this, "Tasks", {
-      partitionKey: { name: "user_id", type: ddb.AttributeType.STRING },
-      billingMode: ddb.BillingMode.PAY_PER_REQUEST,
-      timeToLiveAttribute: "ttl",
-    });
 
-    // Add GSI based on user_id.
-    table.addGlobalSecondaryIndex({
-      indexName: "user-index",
-      partitionKey: { name: "task_id", type: ddb.AttributeType.STRING },
-      sortKey: { name: "created_time", type: ddb.AttributeType.NUMBER },
+    // Create a DDB table of all store locations
+    const storeTable = new ddb.Table(this, "StoreTable", {
+      partitionKey: { name: "store_location", type: ddb.AttributeType.STRING },
+      sortKey: { name: "request_id", type: ddb.AttributeType.STRING },
+      billingMode: ddb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: "null",
     });
+    storeTable.addGlobalSecondaryIndex({
+      indexName: "request-index",
+      partitionKey: { name: "request_id", type: ddb.AttributeType.STRING },
+      sortKey: { name: "created_time", type: ddb.AttributeType.NUMBER },
+    })
+  
 
     // Create Lambda function for the API.
     const api = new lambda.Function(this, "API", {
@@ -28,7 +29,7 @@ export class TodoInfraStack extends Stack {
       code: lambda.Code.fromAsset("../api/lambda_function.zip"),
       handler: "todo.handler",
       environment: {
-        TABLE_NAME: table.tableName,
+        TABLE_NAME: storeTable.tableName,
       },
     });
 
@@ -47,6 +48,6 @@ export class TodoInfraStack extends Stack {
       value: functionUrl.url,
     });
 
-    table.grantReadWriteData(api);
+    storeTable.grantReadWriteData(api);
   }
 }
