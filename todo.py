@@ -29,14 +29,15 @@ def root():
     return {"message": "Hello from ToDo API!"}
 
 #get method to take in maitenance requests from html form
+"""
 @app.get("/create-maitenance-request", response_class=HTMLResponse)
 def create_maitenance_request(request: Request):
     return templates.TemplateResponse("create-maitenance-request.html", {"request": request})
-
+"""
 
 #post method which updates db table with the form info based on the selected store location
 @app.post("/create-maitenance-request", response_class=HTMLResponse)
-def create_maitenance_request(request: Request, form_data: requestform = Depends(requestform.as_form)):
+def create_maitenance_request_post(request: Request, form_data: requestform = Depends(requestform.as_form)):
     
     request_id = str(uuid4())
 
@@ -53,6 +54,7 @@ def create_maitenance_request(request: Request, form_data: requestform = Depends
         "file": form_data.file,
         "created_time": int(time.time())
     }
+    print(Item)
     table = _get_table()
     table.put_item(Item=Item)
     return templates.TemplateResponse("dashboard.html", {"maitenance-request": Item}, {"request", request})
