@@ -36,7 +36,7 @@ def create_maitenance_request(request: Request):
 
 
 #post method which updates db table with the form info based on the selected store location
-@app.post("/create-maitenance-request", response_class=HTMLResponse)
+@app.post("/create-maitenance-reques-post", response_class=HTMLResponse)
 def create_maitenance_request_post(request: Request, form_data: requestform = Depends(requestform.as_form)):
     
     request_id = str(uuid4())
