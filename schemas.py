@@ -2,6 +2,7 @@ from fastapi import Form, File, UploadFile
 from pydantic import BaseModel
 
 class requestform(BaseModel):
+    store_location: str
     name: str
     lastname: str
     email: str
@@ -12,6 +13,7 @@ class requestform(BaseModel):
     @classmethod
     def as_form(
         cls,
+        store_location: str = Form(...),
         name: str = Form(...),
         lastname: str = Form(...),
         email: str = Form(...),
@@ -20,6 +22,7 @@ class requestform(BaseModel):
         file: UploadFile = File(...)
     ):
         return cls(
+            store_location=store_location,
             name=name,
             lastname=lastname,
             email=email,
