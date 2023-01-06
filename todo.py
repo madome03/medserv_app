@@ -29,11 +29,11 @@ def root():
     return {"message": "Hello from ToDo API!"}
 
 #get method to take in maitenance requests from html form
-"""
+
 @app.get("/create-maitenance-request", response_class=HTMLResponse)
 def create_maitenance_request(request: Request):
     return templates.TemplateResponse("create-maitenance-request.html", {"request": request})
-"""
+
 
 #post method which updates db table with the form info based on the selected store location
 @app.post("/create-maitenance-request", response_class=HTMLResponse)
