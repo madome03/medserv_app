@@ -1,154 +1,181 @@
 import os
 import time
-import boto3
 from typing import Optional
 from uuid import uuid4
-from fastapi import FastAPI, HTTPException, Form, File, UploadFile, Depends, Request
+import boto3
+from boto3.dynamodb.conditions import Key
+from fastapi import (Depends, FastAPI, File, Form, HTTPException, Request, UploadFile)
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import RedirectResponse
 from mangum import Mangum
 from pydantic import BaseModel
-from boto3.dynamodb.conditions import Key
-import uvicorn
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from schemas import requestform
+from fastapi.middleware.cors import CORSMiddleware
+import re
+import logging
 
 app = FastAPI()
 
+
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 handler = Mangum(app)
 
-
 templates = Jinja2Templates(directory="templates")
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
-
+logger = logging.getLogger('maintenance_request')
+logger.setLevel(logging.INFO)
 
 
 @app.get("/")
-def root():
+async def root():
     return {"message": "Hello from ToDo API!"}
 
-#get method to take in maitenance requests from html form
-
-@app.get("/create-maitenance-request", response_class=HTMLResponse)
-def create_maitenance_request(request: Request):
-    return templates.TemplateResponse("create-maitenance-request.html", {"request": request})
-
-
-#post method which updates db table with the form info based on the selected store location
-@app.post("/create-maitenance-reques-post", response_class=HTMLResponse)
-def create_maitenance_request_post(request: Request, form_data: requestform = Depends(requestform.as_form)):
-    
-    request_id = str(uuid4())
-
-    store_location = form_data.store_location
-
-    Item={
-        "store_location": store_location,
-        "request_id": request_id,
-        "name": form_data.name,
-        "lastname": form_data.lastname,
-        "email": form_data.email,
-        "phone": form_data.phone,
-        "message": form_data.message,
-        "file": form_data.file,
-        "created_time": int(time.time())
-    }
-    print(Item)
-    table = _get_table()
-    table.put_item(Item=Item)
-    return templates.TemplateResponse("dashboard.html", {"maitenance-request": Item}, {"request", request})
-
-    
-
-
-#get method which shows the amount of pending maitenance requests there are 
-
-
-
-
-
-
+s3_maitenance_request = boto3.resource('s3')
 
 def _get_table():
-    # Get the table from the environment variable.
     table_name = os.environ.get("TABLE_NAME")
-    return boto3.resource("dynamodb").Table(table_name)
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(table_name)
+    return table
 
-if __name__ == '__main__':
-    uvicorn.run(app)
 
-    """
-@app.put("/create-task")
-async def create_task(put_task_request: PutTaskRequest):
+#save maintenance requests
+@app.post("/save-maintenance-request")
+async def create_maitenance_request(request: Request):
+
+    table = _get_table()
+
+    try:
+
+        data = await request.form()  # get the form data from the request
+
+    except Exception as e:
+
+        logger.error(f'Error getting form data: {e}')
+        
+        return {'status code': 400, 'body': "Error: missing form data"}
+
     created_time = int(time.time())
+
+    store_location = data.get('store_location', None)
+
+    if not store_location:
+
+        logger.error('Error: missing store_location')
+        
+        return {'status code': 400, 'body': "Error: missing store_location in form data"}
+
+    name = data.get('name', None)
+    lastname = data.get('lastname', None)
+    email = data.get('email', None)
+    phonenumber = data.get('phonenumber', None)
+    message = data.get('message', None)
+
+    if not all(val is not None for val in (name, lastname, email, phonenumber, message)):
+
+        logger.error('Error: missing fields in form data')
+        return {'status code': 400, 'body': "Error: missing fields in form data"}
+
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+        logger.error('Error: invalid email')
+        return {'status code': 400, 'body': "Error: invalid email"}
+
+    if not phonenumber.isdigit():
+        logger.error('Error: invalid phone number')
+        return {'status code': 400, 'body': "Error: invalid phone number"}
+
     item = {
-        "user_id": put_task_request.user_id,
-        "content": put_task_request.content,
-        "is_done": False,
-        "created_time": created_time,
-        "task_id": f"task_{uuid4().hex}",
-        "ttl": int(created_time + 86400),  # Expire after 24 hours.
+
+        'store_location': {'S': store_location},
+        'name': {'S': name},
+        'lastname': {'S': lastname},
+        'email': {'S': email},
+        'phonenumber': {'S': phonenumber},
+        'message': {'S': message},
+        'is_done': {'BOOL': False},
+        'created_time': {'N': str(created_time)},
+        'request_id': {'S': str(uuid4())}
     }
+    try:
+    # insert the item into the Dynamodb database
+        if 'file' in data:
+            file = data['file']
 
-    # Put it into the table.
-    table = _get_table()
-    table.put_item(Item=item)
-    return {"task": item}
+            s3_maitenance_request.Bucket('www.mymedserv.com').upload_file(file.filename, file.file)
+    
+            item['attachment'] = {'S': file.filename}
+    
+
+    except Exception as e:
+
+        logger.error(f'Error uploading attachment to S3: {e}')
+        return {'status code': 500, 'body': "Error uploading attachment to S3"}
+    
+    if 'attachment' in item:
+        logger.info("Attachment added successfully")
+
+    else:
+        logger.info("Attachment not added")
+
+    try:
+        table.update_item(
+            Key={
+                'store_location': {'S': store_location},
+                'created_time': {'N': str(created_time)}
+            },
+             UpdateExpression='SET #name = :name, #lastname = :lastname, #email = :email, #phonenumber = :phonenumber, #message = :message, #is_done = :is_done, #created_time = :created_time, #request_id = :request_id, #attachment = :attachment',
+            ExpressionAttributeNames={
+                '#name': 'name',
+                '#lastname': 'lastname',
+                '#email': 'email',
+                '#phonenumber': 'phonenumber',
+                '#message': 'message',
+                '#is_done': 'is_done',
+                '#request_id': 'request_id',
+                '#attachment': 'attachment',
+            },
+             ExpressionAttributeValues={
+                ':name': item['name'],
+                ':lastname': item['lastname'],
+                ':email': item['email'],
+                ':phonenumber': item['phonenumber'],
+                ':message': item['message'],
+                ':is_done': item['is_done'],
+                ':request_id': item['request_id'],
+                ':attachment': item.get('attachment', {})
+            }
+        )
+    except Exception as e:
+
+        logger.error(f'Error updating item in DynamoDB: {e}')
+        return {'status code': 500, 'body': 'Error updating item in DynamoDB'}
+
+    logger.info('Maintenance request added successfully to the database')
+    return {'status code': 200, 'body': 'Maintenance request added successfully to the database'}
+
+    
 
 
-@app.get("/get-task/{task_id}")
-async def get_task(task_id: str):
-    # Get the task from the table.
-    table = _get_table()
-    response = table.get_item(Key={"task_id": task_id})
-    item = response.get("Item")
-    if not item:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-    return item
-
-
-@app.get("/list-tasks/{user_id}")
-async def list_tasks(user_id: str):
-    # List the top N tasks from the table, using the user index.
+@app.get("/store-names/{store_location}")
+async def get_tasks(store_location: str):
     table = _get_table()
     response = table.query(
-        IndexName="user-index",
-        KeyConditionExpression=Key("user_id").eq(user_id),
-        ScanIndexForward=False,
-        Limit=10,
+        KeyConditionExpression=Key("store_location").eq(store_location) 
     )
-    tasks = response.get("Items")
-    return {"tasks": tasks}
+    if response == None:
+        return 0
+    else:
+        return response["Items"]
+    
 
 
-@app.put("/update-task")
-async def update_task(put_task_request: PutTaskRequest):
-    # Update the task in the table.
-    table = _get_table()
-    table.update_item(
-        Key={"task_id": put_task_request.task_id},
-        UpdateExpression="SET content = :content, is_done = :is_done",
-        ExpressionAttributeValues={
-            ":content": put_task_request.content,
-            ":is_done": put_task_request.is_done,
-        },
-        ReturnValues="ALL_NEW",
-    )
-    return {"updated_task_id": put_task_request.task_id}
-
-
-@app.delete("/delete-task/{task_id}")
-async def delete_task(task_id: str):
-    # Delete the task from the table.
-    table = _get_table()
-    table.delete_item(Key={"task_id": task_id})
-    return {"deleted_task_id": task_id}
-
-@app.post("/create-user")
-async def create_user(user_id: str):
-    # Create a new user in the users table
-    table = _get_users_table()
-    table.put_item(Item={"user_id": user_id})
-    return {"user_id": user_id}"""
 
